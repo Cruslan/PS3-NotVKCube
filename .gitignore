@@ -1,0 +1,23 @@
+# Build artifacts and compiler outputs
+build/
+*.o
+*.elf
+*.self
+*.fake.self
+*.pkg
+*.gnpdrm.pkg
+
+# Local toolchain dependencies
+ps3dev/
+
+# System and editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.tmp
+
+# Temporary agent workspaces and scratch pads
+scratch/
+.gemini/
+Project.md
