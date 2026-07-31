@@ -1,68 +1,69 @@
 # Makefile for PS3 VKCube Port using Tiny3D/PSL1GHT
 
-# Define project target and objects first, so they are available when ppu_rules is included
-TARGET		:=	notvkcube
-TITLE		:=	NOTVKCUBE
-APPID		:=	NOTVKCUBE
-CONTENTID	:=	UP0001-NOTVKCUBE_00-0000000000000000
+export PS3DEV	?= $(CURDIR)/ps3dev
+export PSL1GHT	?= $(PS3DEV)
 
-OFILES		:=	main.o
-BUILDDIR	?=	build
+TARGET		:= notvkcube
+TITLE		:= NOTVKCUBE
+APPID		:= NOTVKCUBE
+CONTENTID	:= UP0001-NOTVKCUBE_00-0000000000000000
 
-ifeq ($(strip $(PS3DEV)),)
-  ifeq ($(strip $(DEVKITPS3)),)
-    export PS3DEV := /home/cruslan/Applications/Build/PS3-VKCube-PPE/ps3dev
-  else
-    export PS3DEV := $(DEVKITPS3)
-  endif
-endif
+OFILES		:= main.o
+BUILDDIR	?= build
 
-export PSL1GHT := $(PS3DEV)
+SFOXML		:= sfo.xml
+
+SDK_URL		:= https://github.com/ps3dev/ps3dev/releases/download/nightly-2026-07-26/ps3dev-linux-X64.tar.gz
+SDK_TAR		:= ps3dev-linux-X64.tar.gz
+
+-include $(PS3DEV)/ppu_rules
 
 # Override GNU Make's default LD (which is 'ld') so that the PS3 compiler is used for linking.
-export LD := ppu-gcc
+export LD	:= $(PS3DEV)/ppu/bin/ppu-gcc
+export CC	:= $(PS3DEV)/ppu/bin/ppu-gcc
 
 # Compiler and Linker flags
-CFLAGS		+= -g -O2 -Wall -I$(PORTLIBS)/include $(LIBPSL1GHT_INC)
-LDFLAGS		+= $(LIBPSL1GHT_LIB) -L$(PORTLIBS)/lib
+CFLAGS		+= -mcpu=cell -O2 -Wall -I$(PS3DEV)/ppu/include -I$(PS3DEV)/portlibs/ppu/include
+LDFLAGS		+= -L$(PS3DEV)/ppu/lib -L$(PS3DEV)/portlibs/ppu/lib
 # Link core libraries and add librt for real-time POSIX extensions (e.g. clock/timer functions)
 LIBS		+= -ltiny3d -lgcm_sys -lnet -lio -lsysutil -lm -lrt
 
-# Include SDK ppu_rules only when not executing the clean target.
-# This prevents make from failing if the SDK directory is missing during clean.
-ifeq ($(filter clean,$(MAKECMDGOALS)),)
-include $(PSL1GHT)/ppu_rules
-endif
+all: pkg
 
-all: $(TARGET).elf $(TARGET).self $(TARGET).pkg
-
-# Explicitly override rules to ensure the sprxlinker tool is run on the elf
-# in a transparent and reproducible way before converting it to SELF/PKG formats.
 $(TARGET).elf: $(OFILES)
 	@echo "Linking ELF: $@"
-	$(LD) $(OFILES) $(LDFLAGS) $(LIBS) -o $@
+	$(CC) $(OFILES) $(LDFLAGS) $(LIBS) -o $@
 
-$(TARGET).self: $(TARGET).elf
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+pkg: $(TARGET).elf
 	@echo "--- Running sprx_linker stage on $< ---"
-	@mkdir -p $(BUILDDIR)
-	$(STRIP) $< -o $(BUILDDIR)/$(TARGET).elf
-	sprxlinker $(BUILDDIR)/$(TARGET).elf
-	make_self $(BUILDDIR)/$(TARGET).elf $@
-	fself $(BUILDDIR)/$(TARGET).elf $(TARGET).fake.self
-
-$(TARGET).pkg: $(TARGET).self
-	@echo "--- Packaging and compiling EBOOT.BIN with sprx_linker processed ELF ---"
 	@mkdir -p $(BUILDDIR)/pkg/USRDIR
-	@cp $(ICON0) $(BUILDDIR)/pkg/ICON0.PNG
-	make_self_npdrm $(BUILDDIR)/$(TARGET).elf $(BUILDDIR)/pkg/USRDIR/EBOOT.BIN $(CONTENTID)
-	sfo --title "$(TITLE)" --appid "$(APPID)" -f $(SFOXML) $(BUILDDIR)/pkg/PARAM.SFO
-	pkg --contentid $(CONTENTID) $(BUILDDIR)/pkg/ $@
-	cp $@ $(basename $@).gnpdrm.pkg
-	package_finalize $(basename $@).gnpdrm.pkg
+	$(PS3DEV)/ppu/bin/ppu-strip $(TARGET).elf -o $(BUILDDIR)/$(TARGET).elf
+	$(PS3DEV)/bin/sprxlinker $(BUILDDIR)/$(TARGET).elf
+	$(PS3DEV)/bin/make_self $(BUILDDIR)/$(TARGET).elf $(TARGET).self
+	$(PS3DEV)/bin/fself $(BUILDDIR)/$(TARGET).elf $(TARGET).fake.self
+	@echo "--- Packaging and compiling EBOOT.BIN with sprx_linker processed ELF ---"
+	@cp pkg/ICON0.PNG $(BUILDDIR)/pkg/ICON0.PNG 2>/dev/null || true
+	$(PS3DEV)/bin/make_self_npdrm $(BUILDDIR)/$(TARGET).elf $(BUILDDIR)/pkg/USRDIR/EBOOT.BIN $(CONTENTID)
+	$(PS3DEV)/bin/sfo --fromxml $(SFOXML) $(BUILDDIR)/pkg/PARAM.SFO 2>/dev/null || cp pkg/PARAM.SFO $(BUILDDIR)/pkg/PARAM.SFO
+	$(PS3DEV)/bin/pkg --contentid $(CONTENTID) $(BUILDDIR)/pkg/ $(TARGET).pkg
+	cp $(TARGET).pkg $(TARGET).gnpdrm.pkg
+	$(PS3DEV)/bin/package_finalize $(TARGET).gnpdrm.pkg 2>/dev/null || true
 
 clean:
-	@echo cleaning ...
-	@rm -f $(OFILES) $(TARGET).elf $(TARGET).self $(TARGET).pkg $(TARGET).fake.self $(TARGET).gnpdrm.pkg
-	@rm -rf $(BUILDDIR)
+	@echo "Cleaning build artifacts and temporary files..."
+	gio trash $(OFILES) $(TARGET).elf $(TARGET).self $(TARGET).pkg $(TARGET).fake.self $(TARGET).gnpdrm.pkg $(BUILDDIR) 2>/dev/null || true
 
-.PHONY: all clean
+prepare:
+	@echo "Downloading PS3 SDK from $(SDK_URL)..."
+	curl -L -o $(SDK_TAR) $(SDK_URL)
+	@echo "Extracting PS3 SDK to project directory..."
+	tar -xzf $(SDK_TAR) -C .
+	@echo "Cleaning up archive..."
+	gio trash $(SDK_TAR) 2>/dev/null || true
+	@echo "PS3 SDK environment successfully set up in ./ps3dev."
+	@echo "Project is ready to build. Run 'make' to compile."
+
+.PHONY: all clean pkg prepare
